@@ -8,10 +8,13 @@ globals [
 ]
 
 breed [ ships ship ]
-breed [ containers container ]
+;breed [ containers container ]
 breed [ ports port ]
 breed [ markets hinterland-market ]
-breed [ quays quay ] ; or is this a port attribute?
+directed-link-breed [ routes route ]
+undirected-link-breed [ railways railway ]
+
+;breed [ quays quay ] ; or is this a port attribute?
 
 
 ships-own [
@@ -21,18 +24,10 @@ ships-own [
   draft           ; meters, float
   owner           ; string
   operating-cost  ; int, USD / hour
-  cargo           ; array of container ids ... or links?
+  cargo           ; int, TEU
   status          ; string, "sailing", "waiting", "unloading", "loading"
   status-time     ; int, duration under current status
   destination-port; port (link)
-]
-
-containers-own [
-  contents        ; string, 'perishable' or 'durable'
-  expiration-time ; int, tick
-  licit           ; boolean
-  value           ; int, USD
-  destination     ; ?, port / market ...
 ]
 
 ports-own [
@@ -40,30 +35,19 @@ ports-own [
   container-capacity ; int
   container-import-queue ; int
   container-export-queue ; int
-  durable-container-import-yard ; array of containers
-  perishable-container-import-yard ; array of containers
-  durable-container-export-yard ; array of containers
-  perishable-container-export-yard ; array of containers
+
   linked-market   ; hinterland-market
   ship-queue      ; array of ships
+
+  num-berths      ; int, number of unloading docks
+  ships-unloading ; array of ships
+
+  processing-rate ; int, TEU / hour
 ]
 
-quays-own [
-  functioning     ; boolean
-  processing-rate ; int, TEU / hour
-  occupant        ; ship
-  occupied        ; boolean
-]
 
 markets-own [
-;  durable-demand ; int, TEU / hour
-;  durable-supply ; int, TEU / hour
-;  perishable-demand ; int, TEU / hour
-;  perishable-supply ; int, TEU / hour
-;  durable-stockpile ; array of containers
-;  perishable-stockpile ; array of containers
-;  durable-export-queue ; array of containers
-;  perishable-export-queue ; array of containers
+
   demand          ; int, TEU / hour
   supply          ; int, TEU / hour
 
@@ -84,8 +68,7 @@ to setup
   clear-all
   set-default-shape ports "square 2"
   set-default-shape markets "circle 2"
-  set-default-shape quays "triangle"
-  set-default-shape containers "square" ; may not visualize these
+
   set ocean-size 75 ; configure in interface
   set num-markets 4 ; configure in interface
   set num-containers 100 ; configure in interface
@@ -93,88 +76,128 @@ to setup
   set global-demand global-supply
   create-world
   build-ports num-markets
-  build-quays
   setup-markets
   generate-fleet
-  distribute-containers
+
   reset-ticks
 
 end
 
 
+
 to go
 
-  ;markets
-  produce
-  consume
+  ask markets [
+    produce
 
+  ]
+
+  ask railways [
+    transport-land
+  ]
 
   ask ports [
-    show "YES"
-;    ask quay-neighbors [
-;      ; command for linked quays ...
-;    ]
 
-    ;
-;    foreach quays [
-;      quay ->
-;;      show item 0 quay
-;      let occupant item 0 quay
-;      if  occupant = false
-;      [
-;        ; get first ship from queue
-;        ifelse length ship-queue > 0
-;        [
-;          let next-ship first ship-queue
-;          show next-ship
-;          ; add ship to quay
-;          ; change status to unloading
-;        ]
-;        [
-;          ; pass
-;        ]
-;
-;
-;;        set quay replace-item 0 next-ship
-;      ]
-;
-;    ]
+    load-ships
 
-    direct-ship
+    if length ship-queue  > 0 [
+      while [ length ships-unloading < num-berths ] [
+
+        let next-ship first ship-queue
+        set ship-queue remove-item 0 ship-queue
+        show "ship-queue"
+        show ship-queue
+        ask next-ship [ set status "unloading" ]
+        set ships-unloading lput next-ship ships-unloading
+
+      ]
+    ]
   ]
 
-  ask ships with [status = "sailing"] [
-    sail-towards-port
-    ; if distance to linked port is < speed
-    ; change status to waiting
+  ask ships with [ status  = "sailing" ] [
+    ifelse distance destination-port > speed
+    [ set heading towards destination-port
+      forward speed ]
+    [ ask destination-port [
+        set ship-queue lput myself ship-queue
+      ]
+      set status "waiting"
+    ]
   ]
 
-  ask ships with [status = "waiting"] [
-    ; do anything? Just keep waiting ...
-  ]
 
-  ask ships with [status = "unloading" ] [
-    unload
-    ; if unloaded
-    ; report unloading time, amount
-    ; set new destination port
-    ; start loading containers bound for that port
-  ]
-
-  ask ships with [status = "loading"] [
-    load ; containers bound for that port
-  ]
-
-  ask ships [
-    set status-time status-time + 1
-  ]
+  tick
 
 end
 
+;  consume
+;
+;
+;  ask ports [
+;    show "YES"
+;;    ask quay-neighbors [
+;;      ; command for linked quays ...
+;;    ]
+;
+;    ;
+;;    foreach quays [
+;;      quay ->
+;;;      show item 0 quay
+;;      let occupant item 0 quay
+;;      if  occupant = false
+;;      [
+;;        ; get first ship from queue
+;;        ifelse length ship-queue > 0
+;;        [
+;;          let next-ship first ship-queue
+;;          show next-ship
+;;          ; add ship to quay
+;;          ; change status to unloading
+;;        ]
+;;        [
+;;          ; pass
+;;        ]
+;;
+;;
+;;;        set quay replace-item 0 next-ship
+;;      ]
+;;
+;;    ]
+;
+;    direct-ship
+;  ]
+;
+;  ask ships with [status = "sailing"] [
+;    sail-towards-port
+;    ; if distance to linked port is < speed
+;    ; change status to waiting
+;  ]
+;
+;  ask ships with [status = "waiting"] [
+;    ; do anything? Just keep waiting ...
+;  ]
+;
+;  ask ships with [status = "unloading" ] [
+;    unload
+;    ; if unloaded
+;    ; report unloading time, amount
+;    ; set new destination port
+;    ; start loading containers bound for that port
+;  ]
+;
+;  ask ships with [status = "loading"] [
+;    load ; containers bound for that port
+;  ]
+;
+;  ask ships [
+;    set status-time status-time + 1
+;  ]
+;
+;end
 
-; Setup Procedures
 
-; Simple for now
+
+;; Setup Procedures
 ; Add GIS data import option ...
 to create-world
 
@@ -211,91 +234,48 @@ to create-world
       set depth 10                     ; option to import more complex benthic topographies
     ]
   ]
+
 end
 
 to build-ports [ num-ports ]
+
   create-ports num-ports
+
   ask ports [
+
     set size 15
-    set color white
+    set color red
     set heading (who * 90 + 45)        ; hard-coded for 4 ports
     forward ocean-size
+
+    set processing-rate 20
     set ship-queue []
+    set ships-unloading []
+    set num-berths 1
 
-;    set quays  [ [ True   20 ] [ False 20 ] ]
-  ]
-
-end
-
-to build-quays
-
-
-  create-quays num-markets * 2         ; hard-coded for 2 quays / port
-  ask quays [
-    set size 8
-    set color white
-;    let side 0
-
-    set heading (who * 90 + 45)
-    forward ocean-size ; they both end up on the port, on top of each other
-
-    create-link-with min-one-of (ports) [ distance myself ]
-      set occupied false
-    set processing-rate 32            ; hard-coded. randomize or set in interface
-    set occupant nobody               ; ?? nobody might not work ...
-
-
-;    ifelse (who min-one-of (quays) [distance myself] > myself )
-;    [ set  side -1]
-;    [ set side 1 ]
-   ]
-
-  ask ports [ ; ?? not sure what I was trying to do here ... position quays
-    let qct 0                         ; link to quays? necessary?
-    ; boooooooo
-;    ask link-neighbors [
-;;      if who turtles-here > myself
-;;      [
-;;        show "YES"
-;;      ]
-;    ]
-;    ask one-of link-neighbors [
-;      set heading heading + 90
-;      fd 15
-;    ]
-;    ask one-of link-neighbors with min-one-of [distance myself]
-;    [
-;      sest heading heading - 90
-;      fd 15
-;
-;    ]
   ]
 
 end
 
 to setup-markets
   create-markets num-markets
+
   ask markets [
     set size 15
     set color gray
     set heading (who * 90 + 45)
     forward ocean-size + 30
 
-    ; hard-coded demand
-;    set durable-demand 10
-;    set durable-supply 10
-;    set perishable-demand 10
-;    set perishable-supply 10
-;
-;    set durable-stockpile []      ;
-;    set perishable-stockpile []   ;
-;
-;    set durable-export-queue []     ;
-;    set perishable-export-queue []   ;
+    set demand 100
+    set supply 100
 
     set land-transport-rate terrestrial-transport-capacity ;
-;    set linked-port min-one-of (other turtles) [distance myself]
-    create-link-with min-one-of (ports) [distance myself]
+
+    set stockpile  (demand * random 20)
+    set export-queue (supply * random 20)
+
+    create-railway-with min-one-of (ports) [distance myself]
+
 ;    ask linked-port [ set linked-market myself]
 
   ]
@@ -304,124 +284,175 @@ end
 to generate-fleet
   create-ships num-ships ; on origin - will need considerable warm-up period
   ask ships [
+
     set destination-port one-of ports ; random ...
-;    create-link-with destination-port
+    create-route-to destination-port
     set size 4
     set color white
     set speed 5          ; hard-coded. opportunity to vary this
     set status "sailing"
-  ]
-end
-
-to distribute-containers
-  create-containers num-containers
-  ask containers [
-
-;    ifelse random 2 = 1
-;    [ set contents "perishable"
-;      set color green
-;;      set expiration-time (ticks + 200 + random 100) ; ?? this will need tuning
-;    ]
-;    [ set contents "durable"
-;      set color gray
-;    ]
-
-    set licit true  ; hard-coded. can be used to simulate corruption / illicit criminal networks
-    set value random 20 * 1000
-    set size 3
+    set capacity 100
+    set cargo (ceiling capacity * random-float 0.5 + 0.5) ; 50-100% full
 
   ]
-
-  ; assign containers to ships, ports or markets
-
-
 end
 
-
-; Go Procedures
-
-; For markets:
-
-to import
- ; remove containers from port's import yard based on land-transport-rate
-
-
-end
-
-to consume
-  ask markets [
-    set stockpile (stockpile - demand)
-;    set perishable-stockpile (perishable-stockpile - perishable-demand)
-  ]
-
-end
-
-
+;; Go Procedures
+;
+;; For markets:
 to produce
-
-  create-containers global-supply / num-ma
-  [
-
-  ]
-
-
-
+  set stockpile stockpile + supply
 end
 
-to export
+to transport-land
+  let my-nodes both-ends
+  let my-market one-of my-nodes with [ member? self markets ]
+  let my-port one-of my-nodes with [ member? self ports ]
 
-end
-
-; For ports:
-to direct-ship
-;  ask item 0 ship-queue
-
-end
-
-
-
-; For ships:
-to sail-towards-port
-
-  ifelse distance destination-port > speed
-  [ set heading towards destination-port
-    forward speed ]
-  [ ask destination-port [
-      set ship-queue lput myself ship-queue
+  ; import - port -> market
+  ifelse [ export-queue ] of my-market  > [ land-transport-rate ] of my-market  [
+    ask my-port [
+      set container-export-queue container-export-queue + [ land-transport-rate ] of my-market
     ]
-    set status "waiting"
+
+    ask my-market [
+      set export-queue export-queue - land-transport-rate
+    ]
+  ]
+  [
+    ask my-port [
+      set container-export-queue container-export-queue + [ export-queue ] of my-market
+    ]
+
+    ask my-market [
+      set export-queue 0
+    ]
   ]
 
+end
 
-;  move-towards
+to load-ships
+  ask ships with [ status = "unloading" ] [
+
+    ; test if shipyard is not full
+    ifelse cargo > [ processing-rate ] of destination-port
+    [ set cargo cargo - [ processing-rate ] of destination-port
+      ask destination-port [
+        set container-import-queue container-import-queue + processing-rate
+      ]
+    ]
+    [ set cargo 0 ]
+
+    if  cargo = 0
+    [ set status "loading" ]
+  ]
+
+  ask ships with [ status = "loading" ] [
+
+    ifelse cargo < capacity - [ processing-rate ] of destination-port
+    [ set cargo cargo + [ processing-rate ] of destination-port ]
+    [ set status "loaded" ]
+
+  ]
+
+  ask ships with [ status = "loaded" ] [
+
+    set destination-port current-destination-port
+    create-route-to destination-port
+    show destination-port
+    set status "sailing"
+  ]
 
 end
 
-to unload
-
-;  if [
+to-report current-destination-port
+;  ask min-one-of markets [ stockpile ]
+  let d-port "x"
+  ask min-one-of markets [ stockpile ] [ ask my-railways [ set d-port other-end ] ]
+  report d-port
 end
 
-to load
+;to import
+; ; remove containers from port's import yard based on land-transport-rate
+;
+;
+;end
 
-end
-
-; For containers:
-
-
-
-
-
-; Events
-
-to notpetya
-end
-
-to hurricane
-end
-
-to dirtybomb
-end
+;
+;to consume
+;  ask markets [
+;    set stockpile (stockpile - demand)
+;;    set perishable-stockpile (perishable-stockpile - perishable-demand)
+;  ]
+;
+;end
+;
+;
+;to produce [ market ]
+;
+;  create-containers global-supply / num-markets
+;  [
+;
+;  ]
+;
+;
+;
+;end
+;
+;to export
+;
+;end
+;
+;; For ports:
+;to direct-ship
+;;  ask item 0 ship-queue
+;
+;end
+;
+;
+;
+;; For ships:
+;to sail-towards-port
+;
+;  ifelse distance destination-port > speed
+;  [ set heading towards destination-port
+;    forward speed ]
+;  [ ask destination-port [
+;      set ship-queue lput myself ship-queue
+;    ]
+;    set status "waiting"
+;  ]
+;
+;
+;;  move-towards
+;
+;end
+;
+;to unload
+;
+;;  if [
+;end
+;
+;to load
+;
+;end
+;
+;; For containers:
+;
+;
+;
+;
+;
+;; Events
+;
+;to notpetya
+;end
+;
+;to hurricane
+;end
+;
+;to dirtybomb
+;end
 @#$#@#$#@
 GRAPHICS-WINDOW
 440
@@ -493,7 +524,7 @@ num-ships
 num-ships
 0
 100
-43.0
+3.0
 1
 1
 NIL
@@ -513,6 +544,23 @@ terrestrial-transport-capacity
 1
 NIL
 HORIZONTAL
+
+BUTTON
+291
+67
+354
+100
+go
+go
+T
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
 
 @#$#@#$#@
 ## WHAT IS IT?
