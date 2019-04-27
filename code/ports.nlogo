@@ -3,6 +3,8 @@ globals [
   num-markets
   num-containers
   ; terrestrial-transport-capacity
+  global-demand
+  global-supply
 ]
 
 breed [ ships ship ]
@@ -36,6 +38,8 @@ containers-own [
 ports-own [
   anchorages      ; int
   container-capacity ; int
+  container-import-queue ; int
+  container-export-queue ; int
   durable-container-import-yard ; array of containers
   perishable-container-import-yard ; array of containers
   durable-container-export-yard ; array of containers
@@ -52,14 +56,20 @@ quays-own [
 ]
 
 markets-own [
-  durable-demand  ; int, TEU / hour
-  durable-supply  ; int, TEU / hour
-  perishable-demand ; int, TEU / hour
-  perishable-supply ; int, TEU / hour
-  durable-stockpile ; array of containers
-  perishable-stockpile ; array of containers
-  durable-export-queue ; array of containers
-  perishable-export-queue ; array of containers
+;  durable-demand ; int, TEU / hour
+;  durable-supply ; int, TEU / hour
+;  perishable-demand ; int, TEU / hour
+;  perishable-supply ; int, TEU / hour
+;  durable-stockpile ; array of containers
+;  perishable-stockpile ; array of containers
+;  durable-export-queue ; array of containers
+;  perishable-export-queue ; array of containers
+  demand          ; int, TEU / hour
+  supply          ; int, TEU / hour
+
+  stockpile       ; array of containers
+  export-queue    ; array of containers
+
   linked-port     ; port
   land-transport-rate ; int, TEU / hour (terrestrial transport system capacity)
 ]
@@ -79,8 +89,9 @@ to setup
   set ocean-size 75 ; configure in interface
   set num-markets 4 ; configure in interface
   set num-containers 100 ; configure in interface
+  set global-supply 20
+  set global-demand global-supply
   create-world
-  ;;;;
   build-ports num-markets
   build-quays
   setup-markets
@@ -94,8 +105,8 @@ end
 to go
 
   ;markets
-    produce
-    consume
+  produce
+  consume
 
 
   ask ports [
@@ -271,16 +282,16 @@ to setup-markets
     forward ocean-size + 30
 
     ; hard-coded demand
-    set durable-demand 10
-    set durable-supply 10
-    set perishable-demand 10
-    set perishable-supply 10
-
-    set durable-stockpile []      ;
-    set perishable-stockpile []   ;
-
-    set durable-export-queue []     ;
-    set perishable-export-queue []   ;
+;    set durable-demand 10
+;    set durable-supply 10
+;    set perishable-demand 10
+;    set perishable-supply 10
+;
+;    set durable-stockpile []      ;
+;    set perishable-stockpile []   ;
+;
+;    set durable-export-queue []     ;
+;    set perishable-export-queue []   ;
 
     set land-transport-rate terrestrial-transport-capacity ;
 ;    set linked-port min-one-of (other turtles) [distance myself]
@@ -306,14 +317,14 @@ to distribute-containers
   create-containers num-containers
   ask containers [
 
-    ifelse random 2 = 1
-    [ set contents "perishable"
-      set color green
-      set expiration-time (ticks + 200 + random 100) ; ?? this will need tuning
-    ]
-    [ set contents "durable"
-      set color gray
-    ]
+;    ifelse random 2 = 1
+;    [ set contents "perishable"
+;      set color green
+;;      set expiration-time (ticks + 200 + random 100) ; ?? this will need tuning
+;    ]
+;    [ set contents "durable"
+;      set color gray
+;    ]
 
     set licit true  ; hard-coded. can be used to simulate corruption / illicit criminal networks
     set value random 20 * 1000
@@ -338,30 +349,23 @@ to import
 end
 
 to consume
-  set durable-stockpile (durable-stockpile - durable-demand)
-  set perishable-stockpile (perishable-stockpile - perishable-demand)
+  ask markets [
+    set stockpile (stockpile - demand)
+;    set perishable-stockpile (perishable-stockpile - perishable-demand)
+  ]
+
 end
 
 
 to produce
 
-  ask markets [
-    create-containers durable-supply
-    [
-      set color black
-      set contents "durable"
-    ]
+  create-containers global-supply / num-ma
+  [
 
-    create-containers perishable-supply
-    [
-      set color green
-      set contents "perishable"
-    ]
   ]
 
 
-  ;ask
-  ;set perishable-
+
 end
 
 to export
@@ -420,13 +424,13 @@ to dirtybomb
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-525
-111
-1487
-1074
+440
+46
+1124
+731
 -1
 -1
-5.271
+3.735
 1
 10
 1
