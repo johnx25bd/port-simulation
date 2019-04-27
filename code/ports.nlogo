@@ -41,6 +41,8 @@ ports-own [
 
   num-berths      ; int, number of unloading docks
   ships-unloading ; array of ships
+  ships-loading   ; array of ships
+  berth-available ; boolean
 
   processing-rate ; int, TEU / hour
 ]
@@ -97,8 +99,8 @@ to go
   ]
 
   ask ports [
-
-    load-ships
+;    let num-berths-available 1
+    load-ships berth-available
 
   ]
 
@@ -232,6 +234,7 @@ to build-ports [ num-ports ]
     set ship-queue []
     set ships-unloading []
     set num-berths 1
+    set berth-available true
 
   ]
 
@@ -311,46 +314,33 @@ to transport-land
 
 end
 
-to load-ships
+to load-ships [ available ]
+
+  show "available" show available
+
+
 
   ask ports [ type self type  " ship-queue " show ship-queue ]
 
-;  ask ports [ if length ships-unloading < num-berths [
-;    if length ship-queue > 0 [
-;      let next-ship first ship-queue
-;      ask next-ship [ set status "unloading" ]
-;      set ship-queue remove next-ship ship-queue
-;      set ships-unloading lput next-ship ships-unloading
-;      type "ship-queue " show ship-queue
-;      type "ships-unloading " show ships-unloading
-;    ]
-;  ]
-;  ]
-
-;  ask ports [
-;    foreach ships-unloading [ s -> ask s [ if status != "loading" [set status "unloading" ]]
-;
-;    ]
-;
-;
-;  ]
-
-
   ask ships with [ status  = "sailing" ] [
+
     ifelse distance destination-port > speed
     [ set heading towards destination-port
       forward speed ]
-
     [
-      let available ( length [ ships-unloading] of destination-port < [ num-berths ] of destination-port )
+;      let available (
+;        ((length [ ships-unloading] of destination-port) +
+;         (length [ ships-loading ] of destination-port)) <
+;         [ num-berths ] of destination-port )
+
       type destination-port type " has berths available: " print available
       ifelse available [
         ask destination-port [
           set ships-unloading lput myself ships-unloading
         ]
         type myself print "unloading"
-
         set status "unloading"
+
       ] [
         ask destination-port [
           set ship-queue lput myself ship-queue]
@@ -370,11 +360,11 @@ to load-ships
 
     show self
     ; test if shipyard is not full
+    ; if they have more cargo than one tick's unload:
     ifelse cargo > [ processing-rate ] of destination-port
     [ set cargo cargo - [ processing-rate ] of destination-port
 
       ask destination-port [
-
         set container-import-queue container-import-queue + processing-rate
       ]
     ]
@@ -383,11 +373,10 @@ to load-ships
       type self type "Fail new Cargo (0): " print cargo
     ]
 
-    type self type "Post fail new Cargo (0): " print cargo
-
     if  cargo <= 0
-    [ type self type "Should have run"
-
+    [ ask destination-port [
+      set ships-unloading remove myself ships-unloading
+      set ships-loading lput myself ships-loading ]
       set status "loading" ]
   ]
 
