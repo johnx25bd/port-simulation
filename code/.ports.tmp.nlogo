@@ -94,7 +94,7 @@ end
 to go
 
   ;markets
-    produce
+    produce durable-supply perishable-supply
     consume
 
 
@@ -352,14 +352,11 @@ to produce
       set contents "durable"
     ]
 
-    create-containers perishable-supply
-    [
-      set color green
-      set contents "perishable"
-    ]
+    create-containers
   ]
 
-
+  [ set color red
+  ]
   ;ask
   ;set perishable-
 end
