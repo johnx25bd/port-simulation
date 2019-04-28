@@ -8,14 +8,13 @@ globals [
 ]
 
 
-;breed [ containers container ]
+
 breed [ ports port ]
 breed [ ships ship ]
 breed [ markets hinterland-market ]
 directed-link-breed [ routes route ]
 undirected-link-breed [ railways railway ]
 
-;breed [ quays quay ] ; or is this a port attribute?
 
 
 ships-own [
@@ -35,7 +34,7 @@ ships-own [
 ]
 
 ports-own [
-  anchorages      ; int
+  anchorages      ; int, deprecated
   container-capacity ; int
   container-import-queue ; int
   container-export-queue ; int
@@ -55,7 +54,9 @@ ports-own [
 markets-own [
 
   demand          ; int, TEU / hour
+  demand-coeff    ; float
   supply          ; int, TEU / hour
+  supply-coeff    ; float
 
   stockpile       ; array of containers
   export-queue    ; array of containers
@@ -155,7 +156,7 @@ to build-ports [ num-ports ]
     set heading (who * 90 + 45)        ; hard-coded for 4 ports
     forward ocean-size
 
-    set processing-rate 100
+    set processing-rate 20
     set ship-queue []
     set ships-unloading []
     set ships-loading []
@@ -177,7 +178,9 @@ to setup-markets
     forward ocean-size + 30
 
     set demand 50
+    set demand-coeff 2.0
     set supply 50
+    set supply-coeff 0.2
 
     set land-transport-rate terrestrial-transport-capacity ;
 
@@ -199,7 +202,7 @@ to generate-fleet
     set color white
     set speed 5          ; hard-coded. opportunity to vary this
     set status "sailing"
-    set capacity 1000
+    set capacity 100
     set cargo ( (random 5 + 5) * 10) ; 50-100% full
 
   ]
@@ -210,15 +213,63 @@ end
 ;; For markets:
 to produce
   ask markets [
-    ; ?? stochasticity, or based on demand?
-    set export-queue floor (export-queue + (supply * random-float 2.0))
+
+    ; every tick - add new supply to export queue each hour
+    set export-queue export-queue + (supply * random-float supply-coeff)
+
+    if export-queue > supply * 50 [
+      if supply-coeff > 0.01 [
+
+        ; if oversupplied, reduce slightly, staying above 1
+        set supply-coeff supply-coeff - 0.01
+      ]
+
+    ]
+
+    if export-queue < supply * 4 [
+
+      ; if undersupplied, increase supply slightly
+      set supply-coeff supply-coeff + 0.01
+    ]
+
+;    ; ?? stochasticity, or based on demand?
+;    if export-queue > supply * 50 [
+;;      set supply-coeff supply-coeff - 0.01
+;    ]
+;
+;    ifelse  export-queue < supply [
+;;      set supply-coeff supply-coeff + 0.01
+;      set export-queue 0
+;    ] [
+;     set export-queue floor (export-queue + (supply * random-float 0.4 )) ;supply-coeff))
+;    ]
+;
+
   ]
 end
 
 
 to consume
   ask markets [
-    set stockpile floor (stockpile - (demand * random-float 1.0))
+
+    set stockpile stockpile - demand
+
+    if stockpile > demand * 50 [
+      ; increase demand slightly
+      set demand demand + 1
+    ;  set demand-coeff demand-coeff + 0.01
+    ]
+
+    if stockpile < demand * 5 [
+
+        set demand demand - 1
+     ; ]
+
+      ; market consumes from stockpile
+
+    ]
+
+
   ]
 end
 
@@ -256,7 +307,7 @@ to transport-land
         set container-import-queue container-import-queue - [ land-transport-rate ] of my-market
       ]
       ask my-market [
-        type "increasing stockpile by " show land-transport-rate
+       ; type "increasing stockpile by " show land-transport-rate
         set stockpile stockpile + land-transport-rate
       ]
     ]
@@ -280,6 +331,7 @@ to load-ships
 
    ask ships with [ status = "loaded" ] [
 
+
     ask destination-port [
       set ships-loading remove myself ships-loading
       ifelse length ship-queue > 0 [
@@ -292,9 +344,16 @@ to load-ships
 
     ]
 
+
     set last-port destination-port
     ask my-routes with [ other-end = [ destination-port ] of myself ] [ die ]
+
+    ; randomly select port
     set destination-port one-of ports
+
+    ; select port with minimum stockpile that is not last-port
+    set destination-port choose-port last-port
+
     create-route-to destination-port
 
     set departure-time ticks
@@ -325,7 +384,7 @@ to load-ships
       ifelse cargo > [ processing-rate ] of destination-port [
         set cargo ( cargo - [ processing-rate ] of destination-port )
         ask destination-port [
-        type self show "UNLOADING to import queue"
+      ;  type self show "UNLOADING to import queue"
           set container-import-queue ( container-import-queue + processing-rate )
         ]
       ] [
@@ -383,11 +442,24 @@ end
 
 
 ; Reporters
-to-report current-destination-port
+to-report choose-port [ not-port ]
 ;  ask min-one-of markets [ stockpile ]
   let dest-port "x"
+  let not-market "y"
+  let possible-ports ports
+
+  ask not-port [ ask my-railways [ set not-market other-end ] ]
+  set possible-ports possible-ports with [ self != not-port ]
+
+  ;show possible-ports
   ask min-one-of markets [ stockpile ] [ ask my-railways [ set dest-port other-end ] ]
-  report dest-port
+  ifelse dest-port != not-port [
+    report dest-port
+  ]
+  [
+    report one-of possible-ports
+  ]
+
 end
 
 to-report space-available?
@@ -478,7 +550,7 @@ num-ships
 num-ships
 0
 100
-53.0
+40.0
 1
 1
 NIL

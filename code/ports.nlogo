@@ -8,14 +8,13 @@ globals [
 ]
 
 
-;breed [ containers container ]
+
 breed [ ports port ]
 breed [ ships ship ]
 breed [ markets hinterland-market ]
 directed-link-breed [ routes route ]
 undirected-link-breed [ railways railway ]
 
-;breed [ quays quay ] ; or is this a port attribute?
 
 
 ships-own [
@@ -35,7 +34,7 @@ ships-own [
 ]
 
 ports-own [
-  anchorages      ; int
+  anchorages      ; int, deprecated
   container-capacity ; int
   container-import-queue ; int
   container-export-queue ; int
@@ -55,7 +54,9 @@ ports-own [
 markets-own [
 
   demand          ; int, TEU / hour
+  demand-coeff    ; float
   supply          ; int, TEU / hour
+  supply-coeff    ; float
 
   stockpile       ; array of containers
   export-queue    ; array of containers
@@ -93,95 +94,15 @@ end
 
 to go
 
-  ask markets [
-    produce
 
-  ]
-
-  ask railways [
-    transport-land
-  ]
-
+  produce
+  transport-land
   load-ships
-;  ask ports [
-;;    let num-berths-available 1
-;
-;
-;  ]
-
-
-
-
+  consume
 
   tick
 
 end
-
-;  consume
-;
-;
-;  ask ports [
-;    show "YES"
-;;    ask quay-neighbors [
-;;      ; command for linked quays ...
-;;    ]
-;
-;    ;
-;;    foreach quays [
-;;      quay ->
-;;;      show item 0 quay
-;;      let occupant item 0 quay
-;;      if  occupant = false
-;;      [
-;;        ; get first ship from queue
-;;        ifelse length ship-queue > 0
-;;        [
-;;          let next-ship first ship-queue
-;;          show next-ship
-;;          ; add ship to quay
-;;          ; change status to unloading
-;;        ]
-;;        [
-;;          ; pass
-;;        ]
-;;
-;;
-;;;        set quay replace-item 0 next-ship
-;;      ]
-;;
-;;    ]
-;
-;    direct-ship
-;  ]
-;
-;  ask ships with [status = "sailing"] [
-;    sail-towards-port
-;    ; if distance to linked port is < speed
-;    ; change status to waiting
-;  ]
-;
-;  ask ships with [status = "waiting"] [
-;    ; do anything? Just keep waiting ...
-;  ]
-;
-;  ask ships with [status = "unloading" ] [
-;    unload
-;    ; if unloaded
-;    ; report unloading time, amount
-;    ; set new destination port
-;    ; start loading containers bound for that port
-;  ]
-;
-;  ask ships with [status = "loading"] [
-;    load ; containers bound for that port
-;  ]
-;
-;  ask ships [
-;    set status-time status-time + 1
-;  ]
-;
-;end
-
 
 
 ;; Setup Procedures
@@ -256,8 +177,10 @@ to setup-markets
     set heading (who * 90 + 45)
     forward ocean-size + 30
 
-    set demand 100
-    set supply 100
+    set demand 50
+    set demand-coeff 2.0
+    set supply 50
+    set supply-coeff 0.2
 
     set land-transport-rate terrestrial-transport-capacity ;
 
@@ -265,8 +188,6 @@ to setup-markets
     set export-queue (supply * random 20)
 
     create-railway-with min-one-of (ports) [distance myself]
-
-;    ask linked-port [ set linked-market myself]
 
   ]
 end
@@ -291,39 +212,118 @@ end
 ;
 ;; For markets:
 to produce
-  set stockpile stockpile + supply
+  ask markets [
+
+    ; every tick - add new supply to export queue each hour
+    set export-queue export-queue + (supply * random-float supply-coeff)
+
+    if export-queue > supply * 50 [
+      if supply-coeff > 0.01 [
+
+        ; if oversupplied, reduce slightly, staying above 1
+        set supply-coeff supply-coeff - 0.01
+      ]
+
+    ]
+
+    if export-queue < supply * 4 [
+
+      ; if undersupplied, increase supply slightly
+      set supply-coeff supply-coeff + 0.01
+    ]
+
+;    ; ?? stochasticity, or based on demand?
+;    if export-queue > supply * 50 [
+;;      set supply-coeff supply-coeff - 0.01
+;    ]
+;
+;    ifelse  export-queue < supply [
+;;      set supply-coeff supply-coeff + 0.01
+;      set export-queue 0
+;    ] [
+;     set export-queue floor (export-queue + (supply * random-float 0.4 )) ;supply-coeff))
+;    ]
+;
+
+  ]
+end
+
+
+to consume
+  ask markets [
+
+    set stockpile stockpile - random demand
+
+    if stockpile > demand * 50 [
+      set demand demand + 1
+    ]
+
+    if stockpile < demand * 5 [
+        set demand demand - 1
+    ]
+
+
+  ]
 end
 
 to transport-land
-  let my-nodes both-ends
-  let my-market one-of my-nodes with [ member? self markets ]
-  let my-port one-of my-nodes with [ member? self ports ]
+  ask railways [
+    let my-nodes both-ends
+    let my-market one-of my-nodes with [ member? self markets ]
+    let my-port one-of my-nodes with [ member? self ports ]
 
-  ; import - port -> market
   ifelse [ export-queue ] of my-market  > [ land-transport-rate ] of my-market  [
-    ask my-port [
-      set container-export-queue container-export-queue + [ land-transport-rate ] of my-market
+
+      ; move train-load of containers market to port
+      ask my-port [
+        set container-export-queue container-export-queue + [ land-transport-rate ] of my-market
+      ]
+      ask my-market [
+        set export-queue export-queue - land-transport-rate
+      ]
+    ]
+    [
+      ; move rest of containers to port
+      ask my-port [
+        set container-export-queue container-export-queue + [ export-queue ] of my-market
+      ]
+
+      ask my-market [
+        set export-queue 0
+      ]
     ]
 
-    ask my-market [
-      set export-queue export-queue - land-transport-rate
-    ]
-  ]
-  [
-    ask my-port [
-      set container-export-queue container-export-queue + [ export-queue ] of my-market
-    ]
+    ; move containers from port to market
+    ifelse [ container-import-queue ] of my-port > [ land-transport-rate ] of my-market [
 
-    ask my-market [
-      set export-queue 0
+      ask my-port [
+        set container-import-queue container-import-queue - [ land-transport-rate ] of my-market
+      ]
+      ask my-market [
+       ; type "increasing stockpile by " show land-transport-rate
+        set stockpile stockpile + land-transport-rate
+      ]
+    ]
+    [
+
+      ask my-market [
+        set stockpile stockpile + [ container-import-queue ] of my-port
+      ]
+      ask my-port [
+        set container-import-queue 0
+      ]
+
     ]
   ]
+  ; set color to reflect stockpile?
+  ; ask my-market
 
 end
 
 to load-ships
 
    ask ships with [ status = "loaded" ] [
+
 
     ask destination-port [
       set ships-loading remove myself ships-loading
@@ -337,9 +337,16 @@ to load-ships
 
     ]
 
+
     set last-port destination-port
     ask my-routes with [ other-end = [ destination-port ] of myself ] [ die ]
+
+    ; randomly select port
     set destination-port one-of ports
+
+    ; select port with minimum stockpile that is not last-port
+    set destination-port choose-port last-port
+
     create-route-to destination-port
 
     set departure-time ticks
@@ -370,6 +377,7 @@ to load-ships
       ifelse cargo > [ processing-rate ] of destination-port [
         set cargo ( cargo - [ processing-rate ] of destination-port )
         ask destination-port [
+      ;  type self show "UNLOADING to import queue"
           set container-import-queue ( container-import-queue + processing-rate )
         ]
       ] [
@@ -423,137 +431,35 @@ to load-ships
     ]
   ]
 
-
-;  ask ships with [ status = "unloading" ] [
-;
-;    show self
-;    ; test if shipyard is not full
-;    ; if they have more cargo than one tick's unload:
-;    ifelse cargo > [ processing-rate ] of destination-port
-;    [ set cargo cargo - [ processing-rate ] of destination-port
-;
-;      ask destination-port [
-;        set container-import-queue container-import-queue + processing-rate
-;      ]
-;    ]
-;    [ ask destination-port [ set container-import-queue container-import-queue + [cargo] of myself ]
-;      set cargo 0
-;      type self type "Fail new Cargo (0): " print cargo
-;    ]
-;
-;    if  cargo <= 0
-;    [ ask destination-port [
-;      type "lput " show myself
-;      set ships-unloading remove myself ships-unloading
-;      set ships-loading lput myself ships-loading ]
-;      set status "loading" ]
-;  ]
-;;
-
-;;
-;  ask ships with [ status = "loaded" ] [
-;
-;    ask destination-port [
-;      set ships-loading remove myself ships-loading
-;      ifelse length ship-queue > 0 [
-;        let next-ship first ship-queue
-;        set ships-unloading lput next-ship ships-unloading
-;        ask next-ship [ set status "unloading" ]
-;      ]
-;      [ set berth-available true ]
-;
-;
-;    ]
-;    set destination-port current-destination-port
-;
-;    create-route-to destination-port
-;    type self type " headed to " show destination-port
-;    set status "sailing"
-;  ]
-;
-
 end
 
-to-report current-destination-port
+
+; Reporters
+to-report choose-port [ not-port ]
 ;  ask min-one-of markets [ stockpile ]
   let dest-port "x"
+  let not-market "y"
+  let possible-ports ports
+
+  ask not-port [ ask my-railways [ set not-market other-end ] ]
+  set possible-ports possible-ports with [ self != not-port ]
+
+  ;show possible-ports
   ask min-one-of markets [ stockpile ] [ ask my-railways [ set dest-port other-end ] ]
-  report dest-port
+  ifelse dest-port != not-port [
+    report dest-port
+  ]
+  [
+    report one-of possible-ports
+  ]
+
 end
 
 to-report space-available?
   report ((container-import-queue + container-export-queue) < container-capacity)
 end
 
-;to import
-; ; remove containers from port's import yard based on land-transport-rate
-;
-;
-;end
 
-;
-;to consume
-;  ask markets [
-;    set stockpile (stockpile - demand)
-;;    set perishable-stockpile (perishable-stockpile - perishable-demand)
-;  ]
-;
-;end
-;
-;
-;to produce [ market ]
-;
-;  create-containers global-supply / num-markets
-;  [
-;
-;  ]
-;
-;
-;
-;end
-;
-;to export
-;
-;end
-;
-;; For ports:
-;to direct-ship
-;;  ask item 0 ship-queue
-;
-;end
-;
-;
-;
-;; For ships:
-;to sail-towards-port
-;
-;  ifelse distance destination-port > speed
-;  [ set heading towards destination-port
-;    forward speed ]
-;  [ ask destination-port [
-;      set ship-queue lput myself ship-queue
-;    ]
-;    set status "waiting"
-;  ]
-;
-;
-;;  move-towards
-;
-;end
-;
-;to unload
-;
-;;  if [
-;end
-;
-;to load
-;
-;end
-;
-;; For containers:
-;
-;
-;
 ;
 ;
 ;; Events
@@ -595,10 +501,10 @@ ticks
 30.0
 
 BUTTON
-59
-58
-125
-91
+87
+47
+153
+80
 setup
 setup
 NIL
@@ -613,9 +519,9 @@ NIL
 
 BUTTON
 169
-71
+46
 250
-104
+79
 go once
 go
 NIL
@@ -629,25 +535,25 @@ NIL
 1
 
 SLIDER
-54
-242
-226
-275
+85
+102
+329
+135
 num-ships
 num-ships
 0
 100
-53.0
+40.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-114
-318
-352
-351
+82
+159
+330
+192
 terrestrial-transport-capacity
 terrestrial-transport-capacity
 0
@@ -659,10 +565,10 @@ NIL
 HORIZONTAL
 
 BUTTON
-291
-67
-354
-100
+265
+46
+328
+79
 go
 go
 T
@@ -674,6 +580,48 @@ NIL
 NIL
 NIL
 1
+
+PLOT
+17
+237
+426
+456
+Markets' Stockpiles
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -2674135 true "" "plot [ stockpile ] of hinterland-market 4"
+"pen-1" 1.0 0 -7500403 true "" "plot [ stockpile ] of hinterland-market 5"
+"pen-2" 1.0 0 -955883 true "" "plot [ stockpile ] of hinterland-market 6"
+"pen-3" 1.0 0 -6459832 true "" "plot [ stockpile ] of hinterland-market 7"
+
+PLOT
+15
+516
+425
+716
+Markets' Export Queues
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot [ export-queue ] of hinterland-market 4"
+"pen-1" 1.0 0 -7500403 true "" "plot [ export-queue ] of hinterland-market 5"
+"pen-2" 1.0 0 -2674135 true "" "plot [ export-queue ] of hinterland-market 6"
+"pen-3" 1.0 0 -955883 true "" "plot [ export-queue ] of hinterland-market 7"
 
 @#$#@#$#@
 ## WHAT IS IT?
@@ -1021,6 +969,23 @@ NetLogo 6.0.4
 @#$#@#$#@
 @#$#@#$#@
 @#$#@#$#@
+<experiments>
+  <experiment name="sweep" repetitions="1" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>count turtles</metric>
+    <metric>[ stockpile ] of hinterland-market 4</metric>
+    <metric>[ stockpile ] of hinterland-market 5</metric>
+    <metric>[ stockpile ] of hinterland-market 6</metric>
+    <metric>[ stockpile ] of hinterland-market 7</metric>
+    <enumeratedValueSet variable="terrestrial-transport-capacity">
+      <value value="50"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="num-ships">
+      <value value="53"/>
+    </enumeratedValueSet>
+  </experiment>
+</experiments>
 @#$#@#$#@
 @#$#@#$#@
 default
