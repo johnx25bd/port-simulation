@@ -7,9 +7,10 @@ globals [
   global-supply
 ]
 
-breed [ ships ship ]
+
 ;breed [ containers container ]
 breed [ ports port ]
+breed [ ships ship ]
 breed [ markets hinterland-market ]
 directed-link-breed [ routes route ]
 undirected-link-breed [ railways railway ]
@@ -28,6 +29,9 @@ ships-own [
   status          ; string, "sailing", "waiting", "unloading", "loading"
   status-time     ; int, duration under current status
   destination-port; port (link)
+  last-port       ; port
+  departure-time  ; int, tick of setting sail
+  arrival-time    ; int, tick of arriving in port
 ]
 
 ports-own [
@@ -42,7 +46,7 @@ ports-own [
   num-berths      ; int, number of unloading docks
   ships-unloading ; array of ships
   ships-loading   ; array of ships
-  berth-available?; boolean
+  berth-available ; boolean
 
   processing-rate ; int, TEU / hour
 ]
@@ -98,11 +102,12 @@ to go
     transport-land
   ]
 
-  ask ports [
-;    let num-berths-available 1
-    load-ships berth-available?
-
-  ]
+  load-ships
+;  ask ports [
+;;    let num-berths-available 1
+;
+;
+;  ]
 
 
 
@@ -233,8 +238,10 @@ to build-ports [ num-ports ]
     set processing-rate 20
     set ship-queue []
     set ships-unloading []
+    set ships-loading []
     set num-berths 1
-
+    set berth-available true
+    set container-capacity 1000
 
   ]
 
@@ -275,7 +282,7 @@ to generate-fleet
     set speed 5          ; hard-coded. opportunity to vary this
     set status "sailing"
     set capacity 100
-    set cargo (ceiling capacity * random-float 0.5 + 0.5) ; 50-100% full
+    set cargo ( (random 5 + 5) * 10) ; 50-100% full
 
   ]
 end
@@ -314,11 +321,79 @@ to transport-land
 
 end
 
-to load-ships [ available ]
+to load-ships
 
-  show "available" show available
+   ask ships with [ status = "loaded" ] [
 
-  ask ports [ type self type  " ship-queue " show ship-queue ]
+    ask destination-port [
+      set ships-loading remove myself ships-loading
+      ifelse length ship-queue > 0 [
+        let next-ship first ship-queue
+        set ships-unloading lput next-ship ships-unloading
+        ask next-ship [ set status "unloading" ]
+      ]
+      [ set berth-available true ]
+
+
+    ]
+
+    set last-port destination-port
+    ask my-routes with [ other-end = [ destination-port ] of myself ] [ die ]
+    set destination-port one-of ports
+    create-route-to destination-port
+
+    set departure-time ticks
+    set arrival-time 0
+    set status "sailing"
+  ]
+
+  ask ships with [ status = "loading" ] [
+
+    ifelse cargo <= ( capacity - [ processing-rate ] of destination-port )
+    [
+      ask destination-port [
+        ; remove containers from export yard ...
+        set container-export-queue ( container-export-queue - processing-rate )
+      ]
+      ; onto ship being loaded
+      set cargo ( cargo + [ processing-rate ] of destination-port )
+
+    ]
+    [ set status "loaded" ]
+
+  ]
+
+  ask ships with [ status = "unloading" ] [
+
+;    if [  space-available? ] of destination-port [
+
+      ifelse cargo > [ processing-rate ] of destination-port [
+        set cargo ( cargo - [ processing-rate ] of destination-port )
+        ask destination-port [
+          set container-import-queue ( container-import-queue + processing-rate )
+        ]
+      ] [
+        ask destination-port [
+          set container-import-queue ( container-import-queue + [ cargo ] of myself )
+          set ships-unloading remove myself ships-unloading
+          set ships-loading lput myself ships-loading
+        ]
+
+        set cargo 0
+        set status "loading"
+      ]
+;    ]
+
+    if member? self [ ship-queue ] of destination-port [
+      if member? self [ ships-unloading ] of destination-port [
+      ask destination-port [
+        set ship-queue remove myself ship-queue
+      ]
+     ; set [ ship-queue ] of destination-port
+    ]
+    ]
+
+  ]
 
   ask ships with [ status  = "sailing" ] [
 
@@ -326,86 +401,88 @@ to load-ships [ available ]
     [ set heading towards destination-port
       forward speed ]
     [
-;      let available (
-;        ((length [ ships-unloading] of destination-port) +
-;         (length [ ships-loading ] of destination-port)) <
-;         [ num-berths ] of destination-port )
 
-      type destination-port type " has berths available: " print available
-      ifelse available [
+      let berth-currently-available [ berth-available ] of destination-port
+      type destination-port type " has berths available: " print berth-currently-available
+      ifelse berth-currently-available [
         ask destination-port [
           set ships-unloading lput myself ships-unloading
-        ]
-        type myself print "unloading"
+          set berth-available false ]
         set status "unloading"
+        set arrival-time ticks
 
-      ] [
+      ]
+
+       [
         ask destination-port [
           set ship-queue lput myself ship-queue]
         set status "waiting"
+        set arrival-time ticks
       ]
 
     ]
   ]
 
 
+;  ask ships with [ status = "unloading" ] [
+;
+;    show self
+;    ; test if shipyard is not full
+;    ; if they have more cargo than one tick's unload:
+;    ifelse cargo > [ processing-rate ] of destination-port
+;    [ set cargo cargo - [ processing-rate ] of destination-port
+;
+;      ask destination-port [
+;        set container-import-queue container-import-queue + processing-rate
+;      ]
+;    ]
+;    [ ask destination-port [ set container-import-queue container-import-queue + [cargo] of myself ]
+;      set cargo 0
+;      type self type "Fail new Cargo (0): " print cargo
+;    ]
+;
+;    if  cargo <= 0
+;    [ ask destination-port [
+;      type "lput " show myself
+;      set ships-unloading remove myself ships-unloading
+;      set ships-loading lput myself ships-loading ]
+;      set status "loading" ]
+;  ]
+;;
 
-  ask ships with [ status = "waiting" ] [
-
-  ]
-
-  ask ships with [ status = "unloading" ] [
-
-    show self
-    ; test if shipyard is not full
-    ; if they have more cargo than one tick's unload:
-    ifelse cargo > [ processing-rate ] of destination-port
-    [ set cargo cargo - [ processing-rate ] of destination-port
-
-      ask destination-port [
-        set container-import-queue container-import-queue + processing-rate
-      ]
-    ]
-    [ ask destination-port [ set container-import-queue container-import-queue + [cargo] of myself ]
-      set cargo 0
-      type self type "Fail new Cargo (0): " print cargo
-    ]
-
-    if  cargo <= 0
-    [ ask destination-port [
-      set ships-unloading remove myself ships-unloading
-      set ships-loading lput myself ships-loading ]
-      set status "loading" ]
-  ]
-
-  ask ships with [ status = "loading" ] [
-
-    ifelse cargo < capacity - [ processing-rate ] of destination-port
-    [ set cargo cargo + [ processing-rate ] of destination-port ]
-    [ set status "loaded" ]
-
-  ]
-
-  ask ships with [ status = "loaded" ] [
-
-    ask destination-port [
-      set ships-unloading remove myself ships-unloading
-    ]
-    set destination-port current-destination-port
-
-    create-route-to destination-port
-    type self type " headed to " show destination-port
-    set status "sailing"
-  ]
-
+;;
+;  ask ships with [ status = "loaded" ] [
+;
+;    ask destination-port [
+;      set ships-loading remove myself ships-loading
+;      ifelse length ship-queue > 0 [
+;        let next-ship first ship-queue
+;        set ships-unloading lput next-ship ships-unloading
+;        ask next-ship [ set status "unloading" ]
+;      ]
+;      [ set berth-available true ]
+;
+;
+;    ]
+;    set destination-port current-destination-port
+;
+;    create-route-to destination-port
+;    type self type " headed to " show destination-port
+;    set status "sailing"
+;  ]
+;
 
 end
 
 to-report current-destination-port
 ;  ask min-one-of markets [ stockpile ]
-  let d-port "x"
-  ask min-one-of markets [ stockpile ] [ ask my-railways [ set d-port other-end ] ]
-  report d-port
+  let dest-port "x"
+  ask min-one-of markets [ stockpile ] [ ask my-railways [ set dest-port other-end ] ]
+  report dest-port
+end
+
+to-report space-available?
+  report ((container-import-queue + container-export-queue) < container-capacity)
 end
 
 ;to import
@@ -560,7 +637,7 @@ num-ships
 num-ships
 0
 100
-3.0
+53.0
 1
 1
 NIL
@@ -597,6 +674,24 @@ NIL
 NIL
 NIL
 1
+
+PLOT
+1265
+72
+1465
+222
+plot 1
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "plot count turtles"
 
 @#$#@#$#@
 ## WHAT IS IT?
